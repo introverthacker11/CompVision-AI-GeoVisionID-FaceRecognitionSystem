@@ -1,24 +1,36 @@
 import streamlit as st
 import cv2
 import numpy as np
-import time
 import os
 import tempfile
-import matplotlib.pyplot as plt
+from ultralytics import YOLO
+from deepface import DeepFace
 
-# =================================================
-# Streamlit UI
-# =================================================
-st.set_page_config(page_title="Template-Based Tank Tracker", layout="centered")
-st.title("🎯 Military Object Tracking (Template Matching)")
-st.write("Upload a video, provide initial bounding box, and get the tracked output.")
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(
+    page_title="AI-GeoVisionID",
+    page_icon="🌍",
+    layout="wide"
+)
+
+st.markdown("""
+<h1 style="text-align: center;">🌍 AI-GeoVisionID</h1>
+<p style="text-align: center; font-size: 18px;">
+    Face Recognition of World Leaders using <b>YOLOv8</b> + <b>ArcFace</b>
+</p>
+<p style="text-align: center; color: lightgray; font-size: 14px;">
+    Developed by Rayyan Ahmed<br>
+""", unsafe_allow_html=True)
+
+st.markdown('''---''')
+# ---------------- Background -----------------
 
 # ---------------- Background ----------------
 st.markdown("""
 <style>
 .stApp {
     background-image: linear-gradient(rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.7)),
-                      url("https://policy-wire.com/wp-content/uploads/2025/05/Pakistan-Day-Parade.jpg");
+                      url("https://media.licdn.com/dms/image/v2/D4D12AQG0D3XyjigtrA/article-cover_image-shrink_720_1280/B4DZWbSJkDHIAI-/0/1742066984144?e=2147483647&v=beta&t=vohjxDKSYtE8nuLDFAdWrBSOUur1H0p94JooC3CQLSQ");
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;
@@ -28,6 +40,8 @@ st.markdown("""
 h1 { color: #FFD700; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
+
+# ---------------- Sidebar ------------------
 
 # ---------------- Sidebar Styling ----------------
 st.markdown("""
@@ -42,237 +56,296 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------- Sidebar Info ----------------
-with st.sidebar.expander("📌 Project Intro"):
+with st.sidebar.expander("📌 Project Overview"):
     st.markdown("""
-    - Perform **single-object military target tracking** in video streams  
-    - Initialize tracking using a **manual bounding box (ROI)**  
-    - Apply **adaptive template matching** for robust frame-to-frame tracking  
-    - Visualize **target lock indicators** (bounding box, crosshair, aim circle)  
-    - Export the **processed tracking video** for analysis or portfolio use  
+    - Perform **real-time face detection and recognition** in images and videos  
+    - Detect faces using **YOLOv8 Face Detection**  
+    - Identify global leaders using **ArcFace embeddings (DeepFace)**  
+    - Display **identity metadata** (name, position, age, nationality)  
+    - Handle **unknown faces** using similarity thresholding  
+    - Support **image & video uploads** via an interactive Streamlit UI  
+    - Designed for **AI Engineer / Computer Vision portfolio showcase**  
     """)
 
-with st.sidebar.expander("👨‍💻 Developers Name-ID"):
+
+with st.sidebar.expander("👨‍💻 Developer"):
     st.markdown("""
-    - **Rayyan Ahmed: 22F-BSAI-11**
-    - **Agha Harris: 22F-BSAI-27** 
-    - **Irtat Mobin: 22F-BSAI-29**  
-    - **Omaid Ejaz: 22F-BSAI-45**  
-    - **Wajhi Qureshi: 22F-BSAI-50**
+    - **Rayyan Ahmed**
+    - **Google Certified AI Prompt Specialist**
+    - **IBM Certified LLM Fine Tuner** 
+    - **Google Certified Business Intelligence Professional**  
+    - **Expert in ML, DL, CV, NLP, LLM**  
     """)
 
 with st.sidebar.expander("🛠️ Tech Stack Used"):
     st.markdown("""
-- 🎯 **OpenCV (Template Matching)** → Core object tracking using adaptive correlation methods  
-- 🖼️ **OpenCV Video I/O** → Frame decoding, drawing overlays, MP4 encoding  
-- ⚙️ **NumPy** → Pixel-level operations and array manipulation  
-- 🌐 **Streamlit** → Interactive UI for video upload, ROI input, and results display  
-- 🧪 **Python Standard Libraries** → Time measurement, file handling, temporary storage  
-""")
+    - 👁️ **YOLOv8 (Ultralytics)** → High-accuracy real-time face detection in images & videos  
+    - 🧠 **ArcFace (DeepFace)** → Deep facial embeddings for identity recognition  
+    - 🖼️ **OpenCV** → Frame processing, face cropping, annotations, and video rendering  
+    - ⚙️ **NumPy** → Vector operations and cosine similarity computation  
+    - 🌐 **Streamlit** → Interactive web interface for image & video uploads  
+    - 🎥 **Video I/O (OpenCV)** → Video decoding, frame-wise inference, and export  
+    - 🧪 **Python Ecosystem** → File handling, caching, and model integration  
+    """)
 
-#############################################
+# ---------------- LOAD MODELS ----------------
+@st.cache_resource
+def load_models():
+    yolo = YOLO("yolov8s-face.pt")
 
-uploaded_video = st.file_uploader("Upload video", type=["mp4", "avi", "mov"])
+    embeddings = {}
+    for file in os.listdir("embeddings"):
+        name = file.replace(".npy", "")
+        embeddings[name] = np.load(os.path.join("embeddings", file))
 
-# =================================================
-# Preview First Frame with Grid & Axes
-# =================================================
-if uploaded_video:
-    st.subheader("📐 First Frame Reference (Use this to set Bounding Box)")
+    return yolo, embeddings
 
-    # Save uploaded video temporarily
-    temp_vid = tempfile.NamedTemporaryFile(delete=False)
-    temp_vid.write(uploaded_video.read())
-    temp_vid.close()
+model, known_embeddings = load_models()
 
-    cap_preview = cv2.VideoCapture(temp_vid.name)
-    ret, frame0 = cap_preview.read()
-    cap_preview.release()
+# ---------------- LEADER INFO ----------------
+leader_info = {
+    "Emmanuel Macron": {
+        "Position": "President of France",
+        "Age": 47,
+        "Nationality": "French"
+    },
+    "Giorgia Meloni": {
+        "Position": "Prime Minister of Italy",
+        "Age": 48,
+        "Nationality": "Italian"
+    },
+    "Recep Tayyip Erdoğan": {
+        "Position": "President of Türkiye",
+        "Age": 71,
+        "Nationality": "Turkish"
+    },
+    "António Guterres": {
+        "Position": "UN Secretary-General",
+        "Age": 76,
+        "Nationality": "Portuguese"
+    },
+    "Keir Starmer": {
+        "Position": "Prime Minister of UK",
+        "Age": 63,
+        "Nationality": "British"
+    },
+    "Luiz Inácio Lula da Silva": {
+        "Position": "President of Brazil",
+        "Age": 80,
+        "Nationality": "Brazilian"
+    },
+    "Cyril Ramaphosa": {
+        "Position": "President of South Africa",
+        "Age": 73,
+        "Nationality": "South African"
+    }
+}
 
-    if ret:
-        frame0_rgb = cv2.cvtColor(frame0, cv2.COLOR_BGR2RGB)
-        h_img, w_img, _ = frame0_rgb.shape
+# ---------------- UTILS ----------------
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.imshow(frame0_rgb)
+THRESHOLD = 0.36
 
-        # Axis setup
-        ax.set_xlabel("X (pixels)")
-        ax.set_ylabel("Y (pixels)")
-        ax.set_title("First Frame with Pixel Grid")
+def recognize_face(face):
+    face = cv2.resize(face, (200, 200))
 
-        # Grid every 50 pixels
-        ax.set_xticks(np.arange(0, w_img, 50))
-        ax.set_yticks(np.arange(0, h_img, 50))
-        ax.grid(color="yellow", linestyle="--", linewidth=0.5, alpha=0.6)
-        ax.imshow(frame0_rgb, origin="upper")
+    embedding = DeepFace.represent(
+        img_path=face,
+        model_name="ArcFace",
+        detector_backend="skip",
+        enforce_detection=False
+    )[0]["embedding"]
 
-        st.pyplot(fig)
+    best_match, best_score = None, -1
 
-        st.info(
-            "🧭 Tip: Use this grid to estimate **x, y, width, height** values accurately.\n"
-            "Coordinates start from **top-left (0,0)** like OpenCV."
-        )
-    else:
-        st.error("Could not read first frame from video.")
+    for person, embeddings in known_embeddings.items():
+        for db_emb in embeddings:
+            score = cosine_similarity(embedding, db_emb)
+            if score > best_score:
+                best_score = score
+                best_match = person
 
-# ---------------- Bounding Box Input ----------------
-st.subheader("Initial Bounding Box (pixels)")
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    x = st.number_input("x", min_value=0, value=100)
-with col2:
-    y = st.number_input("y", min_value=0, value=100)
-with col3:
-    w = st.number_input("width", min_value=10, value=150)
-with col4:
-    h = st.number_input("height", min_value=10, value=150)
+    if best_score < THRESHOLD:
+        return "Unknown", best_score
 
-# ---------------- Output filename ----------------
-user_filename = st.text_input(
-    "Enter output file name (without extension):",
-    value="tracked_video"
+    return best_match, best_score
+
+mode = st.sidebar.radio(
+    "🎯 Select Mode",
+    ["Image Recognition", "Video Recognition"]
 )
 
-start_btn = st.button("🚀 Start Tracking")
+if mode == "Image Recognition":
 
-# =================================================
-# Tracking function
-# =================================================
-def run_tracker(video_path, bbox, video_out_path):
-    search_expansion = 80
-    confidence_thr = 0.55
-    update_every_n = 10
+    st.subheader("🖼 Image Face Recognition")
 
-    cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    out = cv2.VideoWriter(
-        video_out_path,
-        cv2.VideoWriter_fourcc(*'mp4v'),
-        fps,
-        (W, H)
+    img_file = st.file_uploader(
+        "Upload an image",
+        type=["jpg", "png", "jpeg"]
     )
 
-    ret, first_frame = cap.read()
-    if not ret:
-        raise RuntimeError("Failed to read video")
+    if img_file:
+        img = np.frombuffer(img_file.read(), np.uint8)
+        frame = cv2.imdecode(img, cv2.IMREAD_COLOR)
 
-    x, y, w, h = bbox
-    template = cv2.cvtColor(first_frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
+        results = model(frame)
 
-    def choose_method(tmpl):
-        mean, std = cv2.meanStdDev(tmpl)
-        mean, std = float(mean), float(std)
-        if std < 140:
-            m = cv2.TM_CCOEFF_NORMED
-        else:
-            m = cv2.TM_SQDIFF_NORMED
-        invert = False
-        if mean > 65:
-            tmpl[:] = cv2.bitwise_not(tmpl)
-            invert = True
-        return m, invert
+        for box in results[0].boxes.xyxy:
+            x1, y1, x2, y2 = map(int, box)
+            face = frame[y1:y2, x1:x2]
 
-    method, invert_template = choose_method(template)
+            name, score = recognize_face(face)
 
-    frame_idx = 0
-    start_time = time.time()
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+            label = name
+            if name in leader_info:
+                info = leader_info[name]
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                y_offset = y1 - 10
 
-        x1 = max(x - search_expansion, 0)
-        y1 = max(y - search_expansion, 0)
-        x2 = min(x + w + search_expansion, W)
-        y2 = min(y + h + search_expansion, H)
+                # Line 1: Name + confidence
+                cv2.putText(
+                    frame,
+                    f"{name} ({score:.2f})",
+                    (x1, y_offset - 18),
+                    cv2.FONT_HERSHEY_PLAIN,
+                    0.7,
+                    (0, 255, 0),
+                    1
+                )
 
-        search_region = gray[y1:y2, x1:x2]
-        if invert_template:
-            search_region = cv2.bitwise_not(search_region)
+                # Line 2: Position
+                cv2.putText(
+                    frame,
+                    info["Position"],
+                    (x1, y_offset),
+                    cv2.FONT_HERSHEY_PLAIN,
+                    0.7,
+                    (0, 255, 0),
+                    1
+                )
 
-        res = cv2.matchTemplate(search_region, template, method)
+                cv2.putText(
+                    frame,
+                    (f"{info['Age']} | {info['Nationality']}"),
+                    (x1, y_offset - 9),
+                    cv2.FONT_HERSHEY_PLAIN,
+                    0.7,
+                    (0, 255, 0),
+                    1
+                )
 
-        if method in (cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED):
-            min_val, _, min_loc, _ = cv2.minMaxLoc(res)
-            confidence = 1.0 - min_val
-            best_loc = min_loc
-        else:
-            _, max_val, _, max_loc = cv2.minMaxLoc(res)
-            confidence = max_val
-            best_loc = max_loc
 
-        if confidence >= confidence_thr:
-            search_expansion = 80
-            x = x1 + best_loc[0]
-            y = y1 + best_loc[1]
-        else:
-            search_expansion = min(search_expansion + 10, 150)
+        col1, col2 = st.columns([1, 1])
 
-        cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 3)
+        with col1:
+            st.image(
+                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
+                caption="Recognition Output",
+                width=450
+            )
 
-        cx, cy = x + w//2, y + h//2
-        cross = max(5, w // 8)
-        radius = max(8, w // 6)
+if mode == "Video Recognition":
 
-        cv2.line(frame, (cx-cross, cy), (cx+cross, cy), (0,0,255), 2)
-        cv2.line(frame, (cx, cy-cross), (cx, cy+cross), (0,0,255), 2)
-        cv2.circle(frame, (cx, cy), radius, (0,0,255), 2)
+    st.subheader("🎥 Video Face Recognition")
 
-        cv2.putText(frame, "Military Vehicle Targeted Successfully.", (x, y-35),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
-        cv2.putText(frame, "FPV Drone AIM Locked.", (x, y+h+25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+    video_file = st.file_uploader(
+        "Upload a video",
+        type=["mp4"]
+    )
 
-        elapsed = time.time() - start_time
-        fps_disp = frame_idx / max(elapsed, 1e-5)
-        cv2.putText(frame, f"FPS: {fps_disp:.2f}", (10,30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+    if video_file:
+        tfile = tempfile.NamedTemporaryFile(delete=False)
+        tfile.write(video_file.read())
 
-        if frame_idx % update_every_n == 0:
-            template = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
-            method, invert_template = choose_method(template)
+        cap = cv2.VideoCapture(tfile.name)
 
-        out.write(frame)
-        frame_idx += 1
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    cap.release()
-    out.release()
-    return video_out_path
+        output_path = "AI_GeoVisionID_Output.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-# =================================================
-# Execution
-# =================================================
-if uploaded_video and start_btn:
-    # Ensure proper .mp4 extension
-    download_name = user_filename.strip()
-    if not download_name.endswith(".mp4"):
-        download_name += ".mp4"
+        progress = st.progress(0)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        processed = 0
 
-    # Full temp path using user filename
-    video_out_path = os.path.join(tempfile.gettempdir(), download_name)
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-    with st.spinner("Processing video..."):
-        output_path = run_tracker(
-            temp_vid.name,
-            bbox=(x, y, w, h),
-            video_out_path=video_out_path
-        )
+            results = model(frame)
 
-    st.success(f"Tracking completed successfully! Output file: {download_name}")
+            for box in results[0].boxes.xyxy:
+                x1, y1, x2, y2 = map(int, box)
+                face = frame[y1:y2, x1:x2]
 
-    # Download button
-    with open(output_path, "rb") as f:
-        st.download_button(
-            label="⬇ Download Output Video",
-            data=f,
-            file_name=download_name,
-            mime="video/mp4"
-        )
+                name, score = recognize_face(face)
 
-    st.code(f"Output saved at:\n{output_path}")
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+                info = leader_info[name]
+                line_gap = 22
+                base_y = y1 - 10  # starting point just above the box
+
+                # Line 1: Name + confidence (top)
+                cv2.putText(
+                    frame,
+                    f"{name} ({score:.2f})",
+                    (x1, base_y - 2 * line_gap),
+                    cv2.FONT_HERSHEY_PLAIN,
+                    1.4,
+                    (0, 255, 0),
+                    2
+                )
+
+                # Line 2: Position (middle)
+                cv2.putText(
+                    frame,
+                    info["Position"],
+                    (x1, base_y - line_gap),
+                    cv2.FONT_HERSHEY_PLAIN,
+                    1.3,
+                    (0, 255, 0),
+                    2
+                )
+
+                # Line 3: Age | Nationality (bottom)
+                cv2.putText(
+                    frame,
+                    f"{info['Age']} | {info['Nationality']}",
+                    (x1, base_y),
+                    cv2.FONT_HERSHEY_PLAIN,
+                    1.2,
+                    (0, 255, 0),
+                    2
+                )
+
+
+            out.write(frame)
+            processed += 1
+            progress.progress(min(processed / total_frames, 1.0))
+
+        cap.release()
+        out.release()
+
+        st.success("✅ Video processing completed!")
+
+        # SHOW VIDEO
+        #st.video(output_path)
+
+        # DOWNLOAD BUTTON
+        with open(output_path, "rb") as f:
+            st.download_button(
+                label="⬇️ Download Processed Video",
+                data=f,
+                file_name="AI_GeoVisionID_Output.mp4",
+                mime="video/mp4"
+            )
+
+        video_file = None
