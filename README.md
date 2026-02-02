@@ -33,14 +33,6 @@ Key features:
 
 ---
 
-## 🖼️ Demo Screenshots
-
-| Image Mode | Video Mode |
-|------------|------------|
-| ![Sample Image](screenshots/sample_image.png) | ![Sample Video](screenshots/sample_video.png) |
-
----
-
 ## 🎯 Usage
 
 1. **Clone the repository**
