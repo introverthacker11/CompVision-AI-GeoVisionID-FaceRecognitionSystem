@@ -4,6 +4,8 @@
 
 **Face Recognition of World Leaders using YOLOv8 + ArcFace**
 
+## App link: https://compvision-ai-geovisionid-facerecognitionsystem-3fzlspcrvy7ayv.streamlit.app/
+
 ---
 
 ## 📌 Project Overview
